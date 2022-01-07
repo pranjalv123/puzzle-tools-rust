@@ -1,17 +1,17 @@
-use std::borrow::Borrow;
-use std::cell::{Ref, RefCell, RefMut};
+
+
 use std::collections::BinaryHeap;
 use std::fmt::{Debug, Formatter};
-use std::ops::Deref;
-use std::rc::Rc;
+
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::{EnumAccess, Error, MapAccess, SeqAccess, Visitor};
+use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
-use crate::alphabet::{ALPHABET, get_idx};
+
 use crate::regex::nfa::graph::{NfaGraph, NfaResult};
 use crate::regex::nfa::state::NfaStateKind::Accept;
 use crate::regex::nfa::state::NfaStatePtr;
-use crate::regex::parse::Pattern;
+
 
 use crate::wordlist::index::Index;
 use crate::wordlist::trienode::{OrderedTrieNode, TrieNodeRef};
@@ -145,7 +145,7 @@ impl<'de> Visitor<'de> for DeserializeTrieVisitor {
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error> where A: SeqAccess<'de> {
-        let mut trie = Trie::new();
+        let trie = Trie::new();
         let mut stack: Vec<TrieNodeRef> = vec![trie.root.clone()];
 
         seq.next_element::<TrieNodeRef>(); //discard root; we already have it
@@ -155,13 +155,13 @@ impl<'de> Visitor<'de> for DeserializeTrieVisitor {
                 //println!("{:?}, {:?}", thing, stack);
             }
 
-            let mut node: TrieNodeRef = thing;
+            let node: TrieNodeRef = thing;
             {
                 while node.depth() < stack.len() {
                     stack.pop();
                 }
             }
-            let letter = node.letter();
+            let _letter = node.letter();
 
 
             let mut parent = stack.pop().unwrap();
@@ -185,7 +185,7 @@ impl Debug for Trie {
 
 #[cfg(test)]
 mod tests {
-    use serde::Serialize;
+    
     use crate::wordlist::index::Index;
     use crate::wordlist::trie::Trie;
 
