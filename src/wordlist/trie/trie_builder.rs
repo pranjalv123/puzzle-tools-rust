@@ -1,13 +1,16 @@
 use std::borrow::BorrowMut;
 use std::fmt::Formatter;
+use std::thread::current;
 use serde::de::{SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
-use crate::wordlist::trie::haschildren::HasChildren;
+use typed_arena::Arena;
+
 use crate::wordlist::trie::Trie;
-use crate::wordlist::trie::mutablenode::{TrieNodeRef};
+use crate::wordlist::trie::mutablenode::{MutableTrieNode, TrieNodeRef};
 
 pub struct TrieBuilder {
     pub(crate) root: TrieNodeRef,
+    arena: Arena<MutableTrieNode>
 }
 
 
@@ -22,6 +25,7 @@ impl TrieBuilder {
         }
         current.borrow_mut().set_is_terminal(true);
         current.borrow_mut().inc_freq(freq);
+        //self.root.insert(word);
         self
     }
     pub fn add_all<'f, I>(&mut self, items: I) -> &mut TrieBuilder
@@ -31,7 +35,8 @@ impl TrieBuilder {
     }
     pub fn new() -> TrieBuilder {
         TrieBuilder {
-            root: Default::default()
+            root: Default::default(),
+            arena: Arena::new()
         }
     }
 

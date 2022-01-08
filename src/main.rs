@@ -3,12 +3,12 @@ mod ciphers;
 mod alphabet;
 mod regex;
 
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+
+
 use std::time::Instant;
 use structopt::StructOpt;
 use crate::alphabet::normalize;
-use crate::wordlist::wordlist::Wordlist;
+use crate::wordlist::wordlist::{FileFormat, Wordlist};
 
 
 /// Search for a pattern in a file and display the lines that contain it.
@@ -23,7 +23,8 @@ struct Cli {
 fn main() {
     let args = Cli::from_args();
 
-    let wl = Wordlist::from_file(args.path.as_path().to_str().unwrap());
+    let wl = Wordlist::from_file(args.path.as_path().to_str().unwrap(),
+                                 FileFormat::builder().build());
 
     let start = Instant::now();
     let l = wl.search(&args.pattern).len();

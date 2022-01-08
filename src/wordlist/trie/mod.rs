@@ -1,22 +1,23 @@
-use std::borrow::{Borrow, BorrowMut};
+
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
+use std::time::Instant;
 use maplit::hashmap;
 
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::{SeqAccess, Visitor};
-use serde::ser::SerializeSeq;
-use crate::normalize;
 
-use crate::regex::nfa::graph::{NfaGraph, NfaResult};
+use serde::ser::SerializeSeq;
+
+
+use crate::regex::nfa::graph::{NfaGraph};
 use crate::regex::nfa::state::NfaStateKind::Accept;
 use crate::regex::nfa::state::NfaStatePtr;
 
 
-use crate::wordlist::index::Index;
+
 use trie_builder::TrieBuilder;
 use crate::wordlist::trie::haschildren::HasChildren;
 use crate::wordlist::trie::trienode::{OrderedTrieNode, TrieNode};
@@ -100,7 +101,7 @@ impl Trie {
         let nfa = &NfaGraph::from_regex(regex);
 
         self.best_first_search(|state: &Vec<NfaStatePtr>| state.iter().any(|x| x.kind_is(&Accept)),
-                               (|state: &Vec<NfaStatePtr>, c: char| {
+                               |state: &Vec<NfaStatePtr>, c: char| {
                                    let lstring = c.to_string();
                                    let result = nfa.apply_with_start(&lstring, &state);
                                    if result.states.is_empty() {
@@ -108,7 +109,7 @@ impl Trie {
                                    } else {
                                        Some(result.states)
                                    }
-                               }),
+                               },
                                |x| x.weight,
                                nfa.starting_states())
     }
@@ -170,8 +171,10 @@ impl Debug for Trie {
 
 impl From<&mut TrieBuilder> for Trie {
     fn from(builder: &mut TrieBuilder) -> Self {
+        let start_decorate = Instant::now();
         builder.decorate();
-        Trie::new(builder.root.0.deref().take().into())
+        println!("Decoration took {}", start_decorate.elapsed().as_secs_f64());
+        Trie::new((&builder.root).into())
     }
 }
 
