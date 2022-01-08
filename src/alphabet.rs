@@ -6,3 +6,6 @@ pub fn get_idx(a: char) -> usize {
     }
     (a.to_ascii_uppercase() as u8 - 'A' as u8) as usize
 }
+pub fn normalize(s: &str) -> String {
+    s.to_ascii_uppercase().chars().filter(|&x| ALPHABET.contains(&(x as u8))).collect()
+}
