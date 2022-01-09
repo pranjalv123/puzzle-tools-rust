@@ -1,12 +1,14 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::rc::Rc;
 use std::time::Instant;
 
 use serde_json::from_str;
-use crate::normalize;
-use crate::wordlist::trie::Trie;
+
 use crate::wordlist::index::Index;
 use typed_builder::TypedBuilder;
+use crate::alphabet::normalize;
+use crate::wordlist::trie::trie::Trie;
 
 pub struct Wordlist<'a> {
     trie: Trie<'a>,
@@ -37,13 +39,18 @@ impl FileFormat {
 }
 
 impl<'a> Wordlist<'a> {
-    pub fn from_file(filename: &str, format: FileFormat) -> Wordlist<'a> {
+
+    pub fn new() -> Wordlist<'a> {
+        Wordlist { trie: Trie::new() }
+    }
+
+    pub fn load_file<'f>(&'a self, filename: &str, format: FileFormat) {
         println!("Reading words from {:#?}", &filename);
 
         let file = File::open(filename).unwrap();
         let buf_reader = BufReader::new(file);
 
-        let mut trie = Trie::builder();
+        let trie = &self.trie;
         let mut count: usize = 0;
         let mut failures: usize = 0;
 
@@ -55,7 +62,8 @@ impl<'a> Wordlist<'a> {
 
         start = Instant::now();
         //buf_reader.lines()
-        lines.iter().for_each(|x| match x {
+        lines.iter().for_each(
+            |x| match x {
             Ok(line) => {
                 if line.len() > 0 {
                     let (word, freq) = format.parse_line(&line);
@@ -77,19 +85,23 @@ impl<'a> Wordlist<'a> {
                  failures, 100.0 * (failures as f64) / (count as f64));
 
         let start_build = Instant::now();
-        let built_trie = trie.build();
+        {
+            trie.build();
+        }
         println!("Built tree in {}", start_build.elapsed().as_millis() as f64 / 1000.0);
-        Wordlist { trie: built_trie }
     }
 
-    pub fn contains(&self, word: &str) -> bool {
+    pub fn contains(&'a self, word: &str) -> bool {
         self.trie.contains(word)
     }
-    pub fn search(&self, regex: &str) -> Vec<String> {
+    pub fn search(&'a self, regex: &str) -> Vec<String> {
         self.trie.query_regex(regex)
     }
+    pub fn search_multithreaded(&'a self, regex: &str) -> Vec<String> {
+        self.trie.query_regex_multithreaded(regex)
+    }
 
-    pub fn anagram(&self, anagram: &str) -> Vec<String> {
+    pub fn anagram(&'a self, anagram: &str) -> Vec<String> {
         self.trie.query_anagram(anagram)
     }
 }

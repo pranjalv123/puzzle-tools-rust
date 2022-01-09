@@ -1,4 +1,4 @@
-mod wordlist;
+pub mod wordlist;
 mod ciphers;
 mod alphabet;
 mod regex;
@@ -23,7 +23,8 @@ struct Cli {
 fn main() {
     let args = Cli::from_args();
 
-    let wl = Wordlist::from_file(args.path.as_path().to_str().unwrap(),
+    let wl = Wordlist::new();
+    wl.load_file(args.path.as_path().to_str().unwrap(),
                                  FileFormat::builder().build());
 
     let start = Instant::now();

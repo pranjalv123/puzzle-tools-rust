@@ -15,7 +15,14 @@ derive-new = "^0.5.9"
 structopt = "^0.3.25"
 typed-builder = "^0.9.1"
 typed-arena = "^2.0.1"
-bumpalo = "^3.9.1"
+rayon = "^1.5.1"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "search_for_many"
+harness = false
 
 [profile.release]
 debug = true
