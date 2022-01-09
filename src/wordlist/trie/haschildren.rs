@@ -1,9 +1,9 @@
 use crate::alphabet::get_idx;
 
 pub(crate) trait HasChildren {
-    fn children(&self) -> &[Option<Self>] where Self : Sized;
+    fn children(&self) -> &[Option<&Self>] where Self : Sized;
     fn get_child(&self, c: char) -> Option<&Self> where Self : Sized {
-        self.children()[get_idx(c)].as_ref()
+        self.children()[get_idx(c)]
     }
 
     fn traverse_prefix<T, F>(&self, f: &mut F)
@@ -11,7 +11,7 @@ pub(crate) trait HasChildren {
         f(self);
         self.children().iter()
             .for_each(|node| {
-                node.as_ref().map(|x| x.traverse_prefix(f))
+                node.map(|x| x.traverse_prefix(f))
                     .unwrap_or(())
             });
     }
@@ -19,7 +19,7 @@ pub(crate) trait HasChildren {
         where F: FnMut(&Self) -> T, Self: Sized {
         self.children().iter()
             .for_each(|node| {
-                node.as_ref().map(|x| x.traverse_postfix(f))
+                node.map(|x| x.traverse_postfix(f))
                     .unwrap_or(())
             });
         f(self);

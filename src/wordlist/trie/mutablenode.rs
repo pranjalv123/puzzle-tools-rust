@@ -17,13 +17,13 @@ use crate::wordlist::trie::trienode::TrieNode;
 #[derive(Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Default)]
 pub(crate) struct MutableTrieNode<'a> {
     #[serde(skip)]
-    pub(crate) children: [Option<&'a Cell<TrieNodeRef>>; ALPHABET.len()],
+    pub(crate) children: [Cell<Option<&'a MutableTrieNode<'a>>>; ALPHABET.len()],
     pub(crate) letter: char,
-    pub(crate) is_terminal: bool,
-    pub(crate) weight: usize,
+    pub(crate) is_terminal: Cell<bool>,
+    pub(crate) weight: Cell<usize>,
     pub(crate) depth: usize,
-    pub(crate) freq: usize,
-    pub(crate) path: String,
+    pub(crate) freq: Cell<usize>,
+    pub(crate) path: &'a str,
 }
 //
 // impl Clone for TrieNodeRef {
@@ -57,67 +57,45 @@ pub(crate) struct MutableTrieNode<'a> {
 //         }
 //     }
 
-impl MutableTrieNode {
-
+impl<'n> MutableTrieNode<'n> {
     pub(crate) fn map_child<'a, T, F>(&'a self, f: &'a mut F) -> Vec<T>
-        where F: FnMut(TrieNodeRef) -> T {
-        self.0.deref().borrow().children.iter().filter(|x| !x.is_none())
-            .map(|x| f(x.as_ref().unwrap().clone())).collect()
+        where F: FnMut(&MutableTrieNode) -> T {
+        self.children.iter()
+            .map(|x| {
+                let optx = x.get();
+                optx.map(|x| f(x))
+            })
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect()
     }
+    //
+    // pub(crate) fn foreach_child_mut<'a, F>(&'a self, f: &'a mut F)
+    //     where F: for <'r> FnMut(&MutableTrieNode) -> &'r MutableTrieNode<'r> {
+    //     self.children.iter()
+    //         .for_each(|mut child| {
+    //             let opt_child = child.get();
+    //             child.set(opt_child.map(|x| f(x)));
+    //         })
+    // }
 
-    pub(crate) fn letter(&self) -> char {
-        self.0.deref().borrow().letter
-    }
-    pub(crate) fn is_terminal(&self) -> bool {
-        self.0.deref().borrow().is_terminal
-    }
-    pub(crate) fn set_is_terminal(&self, b: bool) {
-        self.0.deref().borrow_mut().is_terminal = b;
-    }
-    pub(crate) fn weight(&self) -> usize {
-        self.0.deref().borrow().weight
-    }
-    pub(crate) fn depth(&self) -> usize {
-        self.0.deref().borrow().depth
-    }
-    pub(crate) fn freq(&self) -> usize {
-        self.0.deref().borrow().freq
-    }
-    pub(crate) fn inc_freq(&self, v: usize) {
-        self.0.deref().borrow_mut().freq += v;
-    }
+    pub(crate) fn decorate(&self) -> &MutableTrieNode<'n> {
+        for mut child_cell in &self.children {
+            child_cell.set(
+                match child_cell.get() {
+                    None => None,
+                    Some(child) => Some(child.decorate())
+                })
+        }
 
-    pub(crate) fn path(&self) -> String {
-        self.0.deref().borrow().path.to_string()
-    }
-
-    pub(crate) fn set_weight(&self, weight: usize) {
-        self.0.deref().borrow_mut().weight = weight;
-    }
-
-    fn new(node: MutableTrieNode) -> TrieNodeRef {
-        TrieNodeRef(Rc::new(RefCell::new(node)), None)
-    }
-
-    fn set_immutable(&mut self, node: TrieNode) {
-        self.1 = Some(node);
-    }
-    fn take_immutable(&mut self) -> Option<TrieNode> {
-        replace(&mut self.1, None)
-    }
-
-    pub(crate) fn decorate(&mut self) {
-        self.map_child(
-            &mut |mut x| x.decorate()
-        );
-        self.set_weight(
-            self.map_child(&mut |x| x.weight())
-                .iter()
-                .fold(self.freq(), |x, y| x + y));
+        self.weight.set(self.map_child(&mut |x| x.weight.get())
+            .iter()
+            .fold(self.freq.get(), |x, y| x + y));
+        self
     }
 }
 
-impl Debug for MutableTrieNode {
+impl Debug for MutableTrieNode<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MutableTrieNode")
             .field("path", &self.path)
@@ -126,62 +104,57 @@ impl Debug for MutableTrieNode {
             .field("freq", &self.freq)
             .field("is_terminal", &self.is_terminal)
             .field("children", &self.children.iter()
-                .filter(|x| x.is_some())
-                .map(|x| x.as_ref().unwrap().letter())
+                .filter(|x| x.get().is_some())
+                .map(|x| x.get().unwrap().letter)
                 .collect::<Vec<_>>(),
             )
             .finish()
     }
 }
 
-impl<'a> MutableTrieNode {
-    fn get_child(&self, c: char) -> Option<TrieNodeRef> {
-        self.children[get_idx(c)].as_ref().map(|x| x.clone()).or(None)
+impl<'a> MutableTrieNode<'a> {
+    fn get_child(&'a self, c: char) -> Option<&'a MutableTrieNode> {
+        self.children[get_idx(c)].get()
     }
 
-    fn get_child_mut(&mut self, c: char) -> Option<TrieNodeRef> {
-        self.children[get_idx(c)].as_ref().map(|x| x.clone()).or(None)
-    }
-    fn create_child(&mut self, c: char, arena: &Arena<MutableTrieNode>) {
-        let mut path = self.path.clone();
+    fn create_child(&self, c: char,
+                    arena: &'a Arena<MutableTrieNode<'a>>,
+                    path_arena: &'a Arena<String>) {
+        let mut path = path_arena.alloc(self.path.to_string());
         path.push(c);
-        self.children[get_idx(c)] =
-
-            Some(TrieNodeRef::new(
-                arena::alloc(MutableTrieNode {
-                    weight: 0,
+        self.children[get_idx(c)].set(
+            Some(
+                arena.alloc(MutableTrieNode {
+                    weight: Cell::new(0),
                     children: Default::default(),
                     letter: c,
-                    is_terminal: false,
-                    freq: 0,
+                    is_terminal: Cell::new(false),
+                    freq: Cell::new(0),
                     depth: self.depth + 1,
                     path,
                 })));
     }
 
-    fn set_child(&mut self, other: TrieNodeRef) {
-        let c = other.letter();
-        self.children[get_idx(c)] = Some(other);
-    }
-
-    fn get_or_create_child(&mut self, c: char, arena: &Arena<MutableTrieNode>) -> TrieNodeRef {
+    pub(crate) fn get_or_create_child(&'a self, c: char,
+                                      arena: &'a Arena<MutableTrieNode<'a>>,
+                                      path_arena: &'a Arena<String>)
+        -> &Cell<Option<&'a MutableTrieNode<'a>>> {
         if self.get_child(c).is_none() {
-            self.create_child(c, arena);
+            self.create_child(c, arena, path_arena);
         }
-        return self.get_child_mut(c).unwrap();
+        return &self.children[get_idx(c)];
     }
-
-
-    fn insert(&mut self, word: &str) {
-        match word.chars().nth(0) {
-            None => {
-                self.is_terminal = true;
-                self.freq += 1;
-            }
-            Some(c) =>
-                self.get_or_create_child(c).insert(&word[1..])
-        }
-    }
+    //
+    // fn insert(&mut self, word: &str) {
+    //     match word.chars().nth(0) {
+    //         None => {
+    //             self.is_terminal = true;
+    //             self.freq += 1;
+    //         }
+    //         Some(c) =>
+    //             self.get_or_create_child(c).insert(&word[1..])
+    //     }
+    // }
 }
 
 

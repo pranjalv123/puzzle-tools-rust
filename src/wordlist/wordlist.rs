@@ -8,8 +8,8 @@ use crate::wordlist::trie::Trie;
 use crate::wordlist::index::Index;
 use typed_builder::TypedBuilder;
 
-pub struct Wordlist {
-    trie: Trie,
+pub struct Wordlist<'a> {
+    trie: Trie<'a>,
 }
 
 #[derive(TypedBuilder)]
@@ -36,8 +36,8 @@ impl FileFormat {
     }
 }
 
-impl Wordlist {
-    pub fn from_file(filename: &str, format: FileFormat) -> Wordlist {
+impl<'a> Wordlist<'a> {
+    pub fn from_file(filename: &str, format: FileFormat) -> Wordlist<'a> {
         println!("Reading words from {:#?}", &filename);
 
         let file = File::open(filename).unwrap();
