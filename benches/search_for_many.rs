@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use criterion::{criterion_group, criterion_main, Criterion};
+use puzzle_tools::wordlist::trie::searchconfig::SearchConfig;
 use puzzle_tools::wordlist::wordlist::{FileFormat, Wordlist};
 
 
@@ -11,18 +12,20 @@ fn criterion_benchmark(c: &mut Criterion) {
     wl.load_file(data_dir.to_str().unwrap(),
                  FileFormat::builder().build());
 
-    c.bench_function("len 3", |b| b.iter(|| wl.search("...")));
+    let config = SearchConfig::new();
+
+    //c.bench_function("len 3", |b| b.iter(|| wl.search("...")));
 
     { let mut group = c.benchmark_group("10s");
-        group.sample_size(10);
-        group.bench_function("len 5", |b| b.iter(|| wl.search(".....")));
-        group.bench_function("len 7", |b| b.iter(|| wl.search(".......")));
+      //  group.sample_size(10);
+     //   group.bench_function("len 5", |b| b.iter(|| wl.search(".....")));
+     //   group.bench_function("len 7", |b| b.iter(|| wl.search(".......")));
     }
 
     { let mut group = c.benchmark_group("10s");
         group.sample_size(10);
-        group.bench_function("len 5 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".....")));
-        group.bench_function("len 7 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".......")));
+        group.bench_function("len 5 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".....",&config)));
+        group.bench_function("len 7 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".......",&config)));
     }
 }
 
