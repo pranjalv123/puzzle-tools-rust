@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use puzzle_tools::wordlist::wordlist::{FileFormat, Wordlist};
 
 
@@ -16,13 +16,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     { let mut group = c.benchmark_group("10s");
         group.sample_size(10);
         group.bench_function("len 5", |b| b.iter(|| wl.search(".....")));
-     //   group.bench_function("len 7", |b| b.iter(|| wl.search(".......")));
+        group.bench_function("len 7", |b| b.iter(|| wl.search(".......")));
     }
 
     { let mut group = c.benchmark_group("10s");
         group.sample_size(10);
-        group.bench_function("len 5", |b| b.iter(|| wl.search(".....")));
-     //   group.bench_function("len 7", |b| b.iter(|| wl.search(".......")));
+        group.bench_function("len 5 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".....")));
+        group.bench_function("len 7 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".......")));
     }
 }
 

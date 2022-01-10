@@ -1,10 +1,11 @@
-use std::cell::{RefCell, RefMut};
+
 use std::collections::HashSet;
 use std::fmt::{Debug, Formatter};
-use std::rc::Rc;
+
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock, RwLockWriteGuard};
 use maplit::hashset;
 use crate::regex::nfa::state::NfaStateKind::Dummy;
 use crate::regex::nfa::state::NfaStatePtr::{Strong, Weak};
@@ -17,12 +18,20 @@ pub struct NfaState {
 }
 
 
+// #[derive(Clone)]
+// pub enum NfaStatePtr {
+//     Strong(Rc<RefCell<NfaState>>, u64, NfaStateKind),
+//     // reference, uid, state kind of reference
+//     Weak(std::rc::Weak<RefCell<NfaState>>, u64, NfaStateKind),
+// }
+
 #[derive(Clone)]
 pub enum NfaStatePtr {
-    Strong(Rc<RefCell<NfaState>>, u64, NfaStateKind),
+    Strong(Arc<RwLock<NfaState>>, u64, NfaStateKind),
     // reference, uid, state kind of reference
-    Weak(std::rc::Weak<RefCell<NfaState>>, u64, NfaStateKind),
+    Weak(std::sync::Weak<RwLock<NfaState>>, u64, NfaStateKind),
 }
+
 
 impl PartialOrd for NfaStatePtr {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -86,22 +95,26 @@ impl NfaStatePtr {
     fn internal_get<T, F>(&self, mut f: F) -> T
         where F: FnMut(&NfaState) -> T {
         match self {
-            Strong(x, _, _) => f(&x.deref().borrow()),
-            Weak(x, _, _) => f(&x.upgrade().unwrap().deref().borrow())
+            Strong(x, _, _) => f(&x.deref().read().unwrap()),
+            Weak(x, _, _) => f(&x.upgrade().unwrap().deref().read().unwrap())
+            // Strong(x, _, _) => f(&x.deref().borrow()),
+            // Weak(x, _, _) => f(&x.upgrade().unwrap().deref().borrow())
         }
     }
 
     fn internal_get_mut<T, F>(&self, mut f: F) -> T
-        where F: FnMut(RefMut<NfaState>) -> T {
+        where F: FnMut(RwLockWriteGuard<NfaState>) -> T {
         match self {
-            Strong(x, _, _) => f(x.deref().borrow_mut()),
-            Weak(x, _, _) => f(x.upgrade().unwrap().deref().borrow_mut())
+            Strong(x, _, _) => f(x.deref().write().unwrap()),
+            Weak(x, _, _) => f(x.upgrade().unwrap().deref().write().unwrap())
+            // Strong(x, _, _) => f(x.deref().borrow_mut()),
+            // Weak(x, _, _) => f(x.upgrade().unwrap().deref().borrow_mut())
         }
     }
 
     fn strong(state: NfaState) -> NfaStatePtr {
         let kind = state.kind.clone();
-        Strong(Rc::new(RefCell::new(state)),
+        Strong(Arc::new(RwLock::new(state)),
                NfaStatePtr::next_id(), kind)
     }
     fn clone(&self) -> NfaStatePtr {
@@ -115,7 +128,7 @@ impl NfaStatePtr {
     fn weak_clone(&self) -> NfaStatePtr {
         match self {
             Strong(x, id, kind) =>
-                Weak(Rc::downgrade(&x), *id, kind.clone()),
+                Weak(Arc::downgrade(&x), *id, kind.clone()),
             Weak(x, id, kind) =>
                 Weak(x.clone(), *id, kind.clone())
         }
@@ -178,7 +191,7 @@ impl NfaStatePtr {
     fn to_weak(&self) -> NfaStatePtr {
         match self {
             Strong(x, id, kind) =>
-                Weak(Rc::downgrade(x), *id, kind.clone()),
+                Weak(Arc::downgrade(x), *id, kind.clone()),
             Weak(..) => self.clone()
 
         }

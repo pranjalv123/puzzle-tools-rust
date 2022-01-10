@@ -1,11 +1,12 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::fmt::Debug;
+use std::ops::Deref;
 use maplit::hashmap;
 use crate::regex::nfa::graph::NfaGraph;
 use crate::regex::nfa::state::NfaStateKind::Accept;
 use crate::regex::nfa::state::NfaStatePtr;
-use crate::wordlist::trie::node::{OrderedTrieNode, TrieNode};
+use crate::wordlist::trie::node::{TrieNode};
 use crate::wordlist::trie::trie::Trie;
 
 impl<'a> Trie<'a> {
@@ -15,7 +16,7 @@ impl<'a> Trie<'a> {
             .map(|x| x.is_terminal.get()).unwrap_or(false);
     }
 
-    fn best_first_search_multithreaded<State, Score, Accept, KeepGoing>
+    fn best_first_search<State, Score, Accept, KeepGoing>
     (&'a self, accept: Accept, keep_going: KeepGoing,
      score: for<'r> fn(&'r TrieNode) -> Score, starting_state: State,
     ) -> Vec<String>
@@ -69,7 +70,7 @@ impl<'a> Trie<'a> {
     pub fn query_regex(&'a self, regex: &str) -> Vec<String> {
         let nfa = &NfaGraph::from_regex(regex);
 
-        self.best_first_search_multithreaded(|state: &Vec<NfaStatePtr>| state.iter().any(|x| x.kind_is(&Accept)),
+        self.best_first_search(|state: &Vec<NfaStatePtr>| state.iter().any(|x| x.kind_is(&Accept)),
                                |state: &Vec<NfaStatePtr>, c: char| {
                                    let lstring = c.to_string();
                                    let result = nfa.apply_with_start(&lstring, &state);
@@ -83,7 +84,7 @@ impl<'a> Trie<'a> {
                                nfa.starting_states())
     }
 
-    fn get_counts_multithreaded(word: &str) -> HashMap<char, usize> {
+    fn get_counts(word: &str) -> HashMap<char, usize> {
         let mut counts = hashmap! {};
 
         word.chars().for_each(|c| {
@@ -93,7 +94,7 @@ impl<'a> Trie<'a> {
     }
 
     pub fn query_anagram(&'a self, word: &str) -> Vec<String> {
-        self.best_first_search_multithreaded(|counts: &HashMap<char, usize>| counts.values().all(|x| *x == 0),
+        self.best_first_search(|counts: &HashMap<char, usize>| counts.values().all(|x| *x == 0),
                                |counts: &HashMap<char, usize>, c: char| {
                                    if *counts.get(&c).unwrap_or(&0) > 0 {
                                        let mut new_counts = counts.clone();
@@ -102,7 +103,7 @@ impl<'a> Trie<'a> {
                                    } else { None }
                                },
                                |x| x.weight.get(),
-                               Self::get_counts_multithreaded(word),
+                               Self::get_counts(word),
         )
     }
 
@@ -119,5 +120,40 @@ impl<'a> Trie<'a> {
         let fst = word.chars().nth(0).unwrap();
         return self.get_node(&word[1..],
                              node.unwrap().get_child(fst));
+    }
+}
+
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct OrderedTrieNode<'a, T>
+    where T: Ord, T: Debug {
+    val: T,
+    node: &'a TrieNode<'a>,
+}
+
+impl<'a> TrieNode<'a> {
+    fn order<T>(&'a self, f: fn(&'a TrieNode) -> T) -> OrderedTrieNode<T>
+        where T: Ord, T: Debug {
+        OrderedTrieNode { val: f(self), node: self }
+    }
+}
+
+impl<'a, T> From<&'a TrieNode<'a>> for OrderedTrieNode<'a, T>
+    where T: Default + Ord + Debug {
+    fn from(node: &'a TrieNode<'a>) ->
+    Self {
+        OrderedTrieNode::<'a, T> {
+            val: Default::default(),
+            node,
+        }
+    }
+}
+
+impl<'a, T> Deref for OrderedTrieNode<'a, T>
+    where T: Ord, T: Debug {
+    type Target = TrieNode<'a>;
+
+    fn deref(&self) -> &TrieNode<'a> {
+        self.node
     }
 }

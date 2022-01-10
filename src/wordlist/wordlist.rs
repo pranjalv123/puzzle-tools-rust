@@ -1,17 +1,17 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::rc::Rc;
+
 use std::time::Instant;
 
 use serde_json::from_str;
 
-use crate::wordlist::index::Index;
 use typed_builder::TypedBuilder;
 use crate::alphabet::normalize;
-use crate::wordlist::trie::trie::Trie;
+use crate::wordlist::trie::trie::{ImmutableTrie, Trie};
 
 pub struct Wordlist<'a> {
     trie: Trie<'a>,
+    immut_trie: ImmutableTrie<'a>
 }
 
 #[derive(TypedBuilder)]
@@ -41,7 +41,7 @@ impl FileFormat {
 impl<'a> Wordlist<'a> {
 
     pub fn new() -> Wordlist<'a> {
-        Wordlist { trie: Trie::new() }
+        Wordlist { trie: Trie::new(), immut_trie: ImmutableTrie::new() }
     }
 
     pub fn load_file<'f>(&'a self, filename: &str, format: FileFormat) {
@@ -51,6 +51,7 @@ impl<'a> Wordlist<'a> {
         let buf_reader = BufReader::new(file);
 
         let trie = &self.trie;
+        let immut = &self.immut_trie;
         let mut count: usize = 0;
         let mut failures: usize = 0;
 
@@ -84,9 +85,10 @@ impl<'a> Wordlist<'a> {
                  count, (elapsed.as_millis() as f64) / 1000.0, (count as f64) / (elapsed.as_millis() as f64),
                  failures, 100.0 * (failures as f64) / (count as f64));
 
+
         let start_build = Instant::now();
         {
-            trie.build();
+            trie.build( immut);
         }
         println!("Built tree in {}", start_build.elapsed().as_millis() as f64 / 1000.0);
     }
@@ -98,7 +100,7 @@ impl<'a> Wordlist<'a> {
         self.trie.query_regex(regex)
     }
     pub fn search_multithreaded(&'a self, regex: &str) -> Vec<String> {
-        self.trie.query_regex_multithreaded(regex)
+        self.immut_trie.query_regex_multithreaded(regex)
     }
 
     pub fn anagram(&'a self, anagram: &str) -> Vec<String> {
