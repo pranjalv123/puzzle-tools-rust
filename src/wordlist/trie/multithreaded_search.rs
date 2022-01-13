@@ -163,7 +163,7 @@ impl<'a, 'scope> ImmutableTrie<'a> {
 
                 let mut callback = result_callback.lock().unwrap();
                 if callback(result, config) {
-                    done.store(false, std::sync::atomic::Ordering::Relaxed);
+                    done.store(true, std::sync::atomic::Ordering::Relaxed);
                     pq.clear();
                     return;
                 }

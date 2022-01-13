@@ -46,7 +46,7 @@ fn main() {
     let mut default_config = SearchConfig::new();
     default_config.space_penalty = Some(5000);//Some(6187267);
     default_config.spaces_allowed = 2;
-    default_config.max_results = Some(100);
+    default_config.max_results = Some(10);
     default_config.prune_freq = 100;
 
     if args.anagram.is_some() {
