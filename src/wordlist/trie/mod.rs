@@ -7,6 +7,7 @@ mod haschildren;
 mod node;
 mod mutable_node_arena;
 mod iterators;
+mod concurrent_pq;
 
 
 

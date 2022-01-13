@@ -5,7 +5,6 @@ use puzzle_tools::wordlist::wordlist::{FileFormat, Wordlist};
 
 
 fn criterion_benchmark(c: &mut Criterion) {
-
     let mut data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     data_dir.push("data/allwords2.txt");
     let wl = Wordlist::new();
@@ -16,16 +15,18 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     //c.bench_function("len 3", |b| b.iter(|| wl.search("...")));
 
-    { let mut group = c.benchmark_group("10s");
-      //  group.sample_size(10);
-     //   group.bench_function("len 5", |b| b.iter(|| wl.search(".....")));
-     //   group.bench_function("len 7", |b| b.iter(|| wl.search(".......")));
+    {
+        let mut group = c.benchmark_group("10s");
+        group.sample_size(10);
+        group.bench_function("len 5", |b| b.iter(|| wl.search(".....")));
+        group.bench_function("len 7", |b| b.iter(|| wl.search(".......")));
     }
 
-    { let mut group = c.benchmark_group("10s");
+    {
+        let mut group = c.benchmark_group("10s");
         group.sample_size(10);
-        group.bench_function("len 5 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".....",&config)));
-        group.bench_function("len 7 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".......",&config)));
+        group.bench_function("len 5 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".....", &config)));
+        group.bench_function("len 7 (multithreaded)", |b| b.iter(|| wl.search_multithreaded(".......", &config)));
     }
 }
 

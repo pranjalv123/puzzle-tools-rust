@@ -8,6 +8,7 @@ use serde_json::from_str;
 
 use typed_builder::TypedBuilder;
 use crate::alphabet::normalize;
+use crate::wordlist::trie::multithreaded_search::ResultCallback;
 use crate::wordlist::trie::searchconfig::SearchConfig;
 use crate::wordlist::trie::trie::{ImmutableTrie, Trie};
 
@@ -15,6 +16,7 @@ pub struct Wordlist<'a> {
     trie: Trie<'a>,
     immut_trie: ImmutableTrie<'a>,
 }
+
 
 #[derive(TypedBuilder)]
 pub struct FileFormat {
@@ -110,15 +112,25 @@ impl<'a> Wordlist<'a> {
     pub fn search(&'a self, regex: &str) -> Vec<String> {
         self.trie.query_regex(regex)
     }
+
     pub fn search_multithreaded(&'a self, regex: &str, config: &SearchConfig) -> Vec<String> {
-        self.immut_trie.query_regex_multithreaded(regex, config)
+        self.immut_trie.query_regex_results(regex, config)
+    }
+    pub fn search_callback<F>(&'a self, regex: &str, config: &SearchConfig, callback: F)
+        where F: ResultCallback {
+        self.immut_trie.query_regex_multithreaded(regex, config, callback)
     }
 
     pub fn anagram(&'a self, anagram: &str) -> Vec<String> {
         self.trie.query_anagram(anagram)
     }
 
-    pub fn anagram_multithreaded(&'a self, anagram: &str, config: &SearchConfig) -> Vec<String> {
-        self.immut_trie.query_anagram_multithreaded(anagram, config)
+
+    pub fn anagram_multithreaded(&'a self, regex: &str, config: &SearchConfig) -> Vec<String>{
+        self.immut_trie.query_anagram_results(regex, config)
+    }
+    pub fn anagram_callback<F>(&'a self, anagram: &str, config: &SearchConfig, callback: F)
+        where F: ResultCallback {
+        self.immut_trie.query_anagram_multithreaded(anagram, config, callback)
     }
 }

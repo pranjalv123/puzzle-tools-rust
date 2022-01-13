@@ -1,64 +1,77 @@
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::fmt::Debug;
-use std::ops::{Deref};
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::AtomicBool;
+use std::hash::Hash;
+use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, TryLockResult};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize};
+use std::sync::atomic::Ordering::Relaxed;
 use maplit::hashmap;
-
+use owning_ref::{MutexGuardRef, MutexGuardRefMut, OwningRef, OwningRefMut, RwLockReadGuardRef};
+use rand::{Rng, thread_rng};
+use rand::seq::SliceRandom;
 use rayon::{scope, Scope};
+use serde_json::ser::State;
 use crate::regex::nfa::graph::NfaGraph;
 use crate::regex::nfa::state::NfaStateKind::Accept;
+use crate::regex::nfa::state::NfaStatePtr;
+use crate::wordlist::trie::concurrent_pq;
+use crate::wordlist::trie::concurrent_pq::ConcurrentPQ;
 
 use crate::wordlist::trie::node::{ImmutableTrieNode};
 use crate::wordlist::trie::searchconfig::SearchConfig;
 use crate::wordlist::trie::trie::{ImmutableTrie, Trie};
 
 
-//#[derive(Debug)]
-struct QItem<'q, State: Send + Debug + 'q>(OrderedTrieNode<'q>, SearchState<'q, State>, State);
+trait StateT: Send + Debug {}
 
-impl<State: Send + Debug> PartialEq<Self> for QItem<'_, State> {
+pub trait ResultCallback: FnMut(String, &SearchConfig) -> bool + Sync + Send {}
+
+impl<F: FnMut(String, &SearchConfig) -> bool + Sync + Send> ResultCallback for F {}
+
+//#[derive(Debug)]
+struct QItem<'q, State: StateT + 'q>(OrderedTrieNode<'q>, SearchState<'q>, State);
+
+impl<'q, State: StateT> concurrent_pq::QItem for QItem<'q, State> {}
+
+impl<State: StateT> PartialEq<Self> for QItem<'_, State> {
     fn eq(&self, other: &Self) -> bool {
         self.0.val == other.0.val
     }
 }
 
-impl<State: Send + Debug> Eq for QItem<'_, State> {}
+impl<State: StateT> Eq for QItem<'_, State> {}
 
-impl<State: Send + Debug> PartialOrd<Self> for QItem<'_, State> {
+impl<State: StateT> PartialOrd<Self> for QItem<'_, State> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<State: Send + Debug> Ord for QItem<'_, State> {
+impl<State: StateT> Ord for QItem<'_, State> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.cmp(&other.0)
     }
 }
 
-type PriorityQueue<'q, State: Send + Debug> = BinaryHeap<QItem<'q, State>>;
-
-struct SearchState<'a, State>
-    where State: Send + Debug + 'a {
+#[derive(Copy, Clone)]
+struct SearchParams<State: StateT> {
     accept: for<'r> fn(&'r State) -> bool,
     keep_going: for<'r> fn(&'r State, char) -> Option<State>,
     score: for<'r> fn(&'r ImmutableTrieNode) -> isize,
+}
 
+struct SearchState<'a> {
     num_spaces: usize,
     current_word_len: usize,
     prev_words: Vec<&'a ImmutableTrieNode<'a>>,
     prev_penalty: isize,
 }
 
-impl<'a, State> Clone for SearchState<'a, State>
-    where State: Send + Debug + 'a {
+impl<'a> Clone for SearchState<'a> {
     fn clone(&self) -> Self {
         SearchState {
-            accept: self.accept,
-            keep_going: self.keep_going,
-            score: self.score,
             num_spaces: self.num_spaces,
             current_word_len: self.current_word_len,
             prev_words: self.prev_words.clone(),
@@ -67,9 +80,8 @@ impl<'a, State> Clone for SearchState<'a, State>
     }
 }
 
-impl<'a, State> SearchState<'a, State>
-    where State: Send + Debug {
-    fn new_word(&self, node: &'a ImmutableTrieNode<'a>, config: &SearchConfig) -> SearchState<'a, State> {
+impl<'a> SearchState<'a> {
+    fn new_word(&self, node: &'a ImmutableTrieNode<'a>, config: &SearchConfig) -> SearchState<'a> {
         let mut new = self.clone();
         new.num_spaces += 1;
         new.current_word_len = 0;
@@ -77,146 +89,141 @@ impl<'a, State> SearchState<'a, State>
         new.prev_penalty += config.space_penalty.unwrap() as isize - node.freq as isize;
         new
     }
-    fn same_word(&self) -> SearchState<'a, State> {
+    fn same_word(&self) -> SearchState<'a> {
         let mut new = self.clone();
         new.current_word_len += 1;
         new
     }
 }
 
+
 impl<'a, 'scope> ImmutableTrie<'a> {
-    fn best_first_search<'f, State>
+    fn best_first_search<'f, State: StateT, F>
     (&'f self,
-     accept: fn(&State) -> bool,
-     keep_going: fn(&State, char) -> Option<State>,
-     score: for<'r> fn(&'r ImmutableTrieNode) -> isize,
      starting_state: State,
+     params: &SearchParams<State>,
      config: &'f SearchConfig,
-    ) -> Vec<String>
-        where State: Send + Debug + 'f
+     result_callback: Arc<Mutex<F>>,
+    )
+        where F: ResultCallback
     {
-        let pq: Arc<Mutex<PriorityQueue<'f, _>>> = Arc::new(Mutex::new(PriorityQueue::new()));
-        let results: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
 
         let search_state = SearchState {
             num_spaces: 0,
             current_word_len: 0,
             prev_words: vec![],
             prev_penalty: 0,
-            accept,
-            score,
-            keep_going,
         };
-        let item = QItem(self.root.get().unwrap().order(score), search_state, starting_state);
         let root = self.root.get().unwrap();
+        let item = QItem(root.order(params.score),
+                         search_state, starting_state);
 
         scope(|scope| {
-            let r = results.clone();
-            let pq = pq.clone();
+            let mut pq = ConcurrentPQ::<QItem<State>>::new();
             let done = Arc::new(AtomicBool::new(false));
 
-            let mut pql = pq.lock().unwrap();
-            pql.push(item);
-            drop(pql);
+            pq.push(item);
             scope.spawn(move |s| {
                 Self::worker(
-                    pq, r, config, done, root, s);
+                    pq, config, params, done, root, s, result_callback);
             })
         });
-
-        let x = results.deref().lock().unwrap().clone();
-        x
     }
 
 
-    fn worker<'f, State>(pq: Arc<Mutex<PriorityQueue<'f, State>>>,
-                         results: Arc<Mutex<Vec<String>>>,
-                         config: &'f SearchConfig,
-                         done: Arc<AtomicBool>,
-                         root: &'f ImmutableTrieNode,
-                         scope: &Scope<'scope>,
+    fn worker<'f, State: StateT, F>(mut pq: ConcurrentPQ<QItem<'f, State>>,
+                                    config: &'f SearchConfig,
+                                    params: &'f SearchParams<State>,
+                                    done: Arc<AtomicBool>,
+                                    root: &'f ImmutableTrieNode,
+                                    scope: &Scope<'scope>,
+                                    result_callback: Arc<Mutex<F>>,
     )
-        where State: Send + Debug + 'f,
+        where State: StateT + 'f, F: ResultCallback + 'scope,
               'f: 'scope
     {
         if config.max_results.is_some() && done.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
-        let mut pq_l = pq.lock().unwrap();
-        let QItem(node, search_state, state) = pq_l.pop().unwrap();
-        drop(pq_l);
+        let item;
+        match pq.try_pop() {
+            Some(x) => item = x,
+            None => return
+        }
+        let QItem(node, search_state, state, ..) = item;
+
         if node.is_terminal {
-            if (search_state.accept)(&state) && search_state.current_word_len >= config.min_word_len {
-                let mut r = results.lock().unwrap();
-                if config.max_length.is_some() && r.len() >= config.max_length.unwrap() {
-                    pq.lock().unwrap().clear();
-                    done.store(false, std::sync::atomic::Ordering::Relaxed);
-                    return;
-                }
+            if (params.accept)(&state) && search_state.current_word_len >= config.min_word_len {
                 let mut new_search_state = search_state.clone();
                 new_search_state.prev_words.push(node.node);
-                r.push(new_search_state.prev_words.iter()
-                    .map(|x| x.path.clone()).collect::<Vec<_>>().join(" "));
-                println!("{:?}, {:?}", r.last(), node.val);
-                drop(r);
+                let result = new_search_state.prev_words.iter()
+                    .map(|x| x.path.clone()).collect::<Vec<_>>().join(" ");
+                if result_callback.lock().unwrap()(result, config) {
+                    done.store(false, std::sync::atomic::Ordering::Relaxed);
+                    pq.clear();
+                    return;
+                }
             }
         }
 
         for child in node.node {
-            if let Some(new_state) = (search_state.keep_going)(&state, child.letter) {
-                let results = results.clone();
-                let pq = pq.clone();
+            if let Some(new_state) = (params.keep_going)(&state, child.letter) {
+                let mut pq = pq.clone();
 
                 let done = done.clone();
                 let new_search_state = search_state.same_word();
                 let item = QItem(
-                    child.order(|x| (search_state.score)(x) - search_state.prev_penalty),
+                    child.order(|x| (params.score)(x) - search_state.prev_penalty),
                     new_search_state,
                     new_state);
-                let mut pql = pq.lock().unwrap();
-                pql.push(item);
-                drop(pql);
+                let result_callback = result_callback.clone();
+
+                pq.push(item);
                 scope.spawn(move |s| {
-                    Self::worker(pq, results, config, done, root,
-                                 s);
+                    Self::worker(pq, config, params, done, root, s, result_callback);
                 })
             }
         }
         if search_state.num_spaces < config.spaces_allowed && search_state.current_word_len >= config.min_word_len {
             if let Some(penalty) = config.space_penalty {
                 scope.spawn(move |s| {
-                    let mut ordered = root.order(|x| (search_state.score)(x) - search_state.prev_penalty);
+                    let mut ordered =
+                        root.order(|x| (params.score)(x) - search_state.prev_penalty);
                     ordered.val -= penalty as isize;
                     let item = QItem(ordered,
                                      search_state.new_word(node.node, config),
                                      state);
-                    let mut pql = pq.lock().unwrap();
-                    pql.push(item);
-                    drop(pql);
-                    Self::worker(pq, results, config, done.clone(), root, s);
+
+                    pq.push(item);
+                    Self::worker(pq, config, params, done.clone(), root, s, result_callback.clone());
                 })
             }
         }
     }
 
 
-    pub fn query_regex_multithreaded(&self, regex: &str, config: &SearchConfig) -> Vec<String> {
+    pub fn query_regex_multithreaded<F>(&self, regex: &str, config: &SearchConfig, result_callback: F)
+        where F: ResultCallback {
         let nfa = NfaGraph::from_regex(regex);
 
+        let params = SearchParams::< (&NfaGraph, Vec<NfaStatePtr>)> {
+            keep_going: |state, c: char| {
+                let lstring = c.to_string();
+                let result = state.0.apply_with_start(&lstring, &state.1);
+                if result.states.is_empty() {
+                    None
+                } else {
+                    Some((state.0, result.states))
+                }
+            },
+            score: |x| x.weight as isize,
+            accept: |state| state.1.iter().any(|x| x.kind_is(&Accept))
+        };
 
-        self.best_first_search(|state| state.1.iter().any(|x| x.kind_is(&Accept)),
-                               |state, c: char| {
-                                   let lstring = c.to_string();
-                                   let result = state.0.apply_with_start(&lstring, &state.1);
-                                   if result.states.is_empty() {
-                                       None
-                                   } else {
-                                       Some((state.0, result.states))
-                                   }
-                               },
-                               |x| x.weight as isize,
-                               (&nfa, nfa.starting_states()),
-                               config)
+        self.best_first_search((&nfa, nfa.starting_states()),
+                               &params,
+                               config,
+                               Arc::new(Mutex::new(result_callback)));
     }
 
     fn get_counts(word: &str) -> HashMap<char, usize> {
@@ -228,26 +235,77 @@ impl<'a, 'scope> ImmutableTrie<'a> {
         counts
     }
 
-    pub fn query_anagram_multithreaded(&self, word: &str, config: &SearchConfig) -> Vec<String> {
-        self.best_first_search(|counts: &HashMap<char, usize>| counts.values().all(|x| *x == 0),
-                               |counts: &HashMap<char, usize>, c: char| {
-                                   if *counts.get(&c).unwrap_or(&0) > 0 {
-                                       let mut new_counts = counts.clone();
-                                       *new_counts.get_mut(&c).unwrap() -= 1;
-                                       Some(new_counts)
-                                   } else { None }
-                               },
-                               |x| x.weight as isize,
+    pub fn query_anagram_multithreaded<F>(&self, word: &str, config: &SearchConfig, result_callback: F)
+        where F: ResultCallback {
+
+        let params = SearchParams {
+            keep_going: |counts: &HashMap<char, usize>, c: char| {
+                if *counts.get(&c).unwrap_or(&0) > 0 {
+                    let mut new_counts = counts.clone();
+                    *new_counts.get_mut(&c).unwrap() -= 1;
+                    Some(new_counts)
+                } else { None }
+            },
+            score: |x| x.weight as isize,
+            accept: |counts: &HashMap<char, usize>| counts.values().all(|x| *x == 0)
+        };
+        self.best_first_search(
                                Self::get_counts(word),
+                               &params,
                                config,
-        )
+                               Arc::new(Mutex::new(result_callback)),
+        );
+    }
+
+    pub fn query_anagram_results(&self, word: &str, config: &SearchConfig) -> Vec<String> {
+        let results = Mutex::new(vec![]);
+        let callback = |result, config: &SearchConfig| {
+            let mut r = results.lock().unwrap();
+            if r.len() >= config.max_results.unwrap_or(usize::MAX) {
+                return true;
+            }
+            r.push(result);
+            false
+        };
+        self.query_anagram_multithreaded(word, config, callback);
+        let x = results.lock().unwrap().clone(); x
+    }
+
+    pub fn query_regex_results(&self, word: &str, config: &SearchConfig) -> Vec<String> {
+        let results = Mutex::new(vec![]);
+        let callback = |result, config: &SearchConfig| {
+            let mut r = results.lock().unwrap();
+            if r.len() >= config.max_results.unwrap_or(usize::MAX) {
+                return true;
+            }
+            r.push(result);
+            false
+        };
+        self.query_regex_multithreaded(word, config, callback);
+        let x = results.lock().unwrap().clone(); x
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+impl StateT for HashMap<char, usize> {}
+
+impl StateT for (&NfaGraph, Vec<NfaStatePtr>) {}
+
+#[derive(PartialEq, Eq, Debug)]
 struct OrderedTrieNode<'a> {
     val: isize,
     node: &'a ImmutableTrieNode<'a>,
+}
+
+impl PartialOrd<Self> for OrderedTrieNode<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrderedTrieNode<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.val.cmp(&other.val)
+    }
 }
 
 impl ImmutableTrieNode<'_> {
@@ -275,7 +333,6 @@ impl<'a> Deref for OrderedTrieNode<'a> {
     }
 }
 
-
 #[test]
 fn test_anagram_multithreaded() {
     let words = vec!["HELLO", "HELP", "GOODBYE", "GOOD"];
@@ -286,11 +343,22 @@ fn test_anagram_multithreaded() {
 
     let default_config = SearchConfig::new();
 
-    assert_eq!(trie.query_anagram_multithreaded("OLEHL", &default_config), vec!["HELLO"]);
-    assert!(trie.query_anagram_multithreaded("LEHL", &default_config).is_empty());
-    assert!(trie.query_anagram_multithreaded("LELO", &default_config).is_empty());
-    assert!(trie.query_anagram_multithreaded("DOG", &default_config).is_empty());
-    assert_eq!(trie.query_anagram_multithreaded("OOGD", &default_config), vec!["GOOD"]);
+    assert_eq!(
+        trie.query_anagram_results("OLEHL", &default_config),
+        vec!["HELLO"]);
+    assert_eq!(
+        trie.query_anagram_results("OOGD", &default_config),
+        vec!["GOOD"]);
+
+    assert_eq!(
+        trie.query_anagram_results("LEHL", &default_config),
+        Vec::<String>::new());
+    assert_eq!(
+        trie.query_anagram_results("LELO", &default_config),
+        Vec::<String>::new());
+    assert_eq!(
+        trie.query_anagram_results("DOG", &default_config),
+        Vec::<String>::new());
 }
 
 #[test]
@@ -301,7 +369,9 @@ fn query_words_in_trie() {
     let immut = ImmutableTrie::new();
     mut_trie.build(&immut);
     let default_config = SearchConfig::new();
-    let mut result = immut.query_regex_multithreaded("H.L*(O|P)", &default_config);
+
+    let mut result =
+        immut.query_regex_results("H.L*(O|P)", &default_config);
     result.sort();
 
     assert_eq!(result, vec!["HELLO", "HELP"])
@@ -318,16 +388,10 @@ fn query_words_in_trie_space_penalty() {
     let mut default_config = SearchConfig::new();
     default_config.space_penalty = Some(50);
     default_config.spaces_allowed = 3;
-    {
-        let mut result = immut.query_regex_multithreaded("H.L*(O|P)", &default_config);
-        result.sort();
 
-        assert_eq!(result, vec!["HELLO", "HELP"])
-    }
-    {
-        let mut result = immut.query_regex_multithreaded("GOODBYE", &default_config);
-        result.sort();
+    let mut result =
+        immut.query_regex_results("GOODBYE", &default_config);
+    result.sort();
 
-        assert_eq!(result, vec!["GOOD BYE", "GOODBYE"])
-    }
+    assert_eq!(result, vec!["GOOD BYE", "GOODBYE"])
 }
