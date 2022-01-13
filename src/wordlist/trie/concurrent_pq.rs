@@ -1,11 +1,12 @@
-use std::collections::BinaryHeap;
-use std::fmt::Debug;
-use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Mutex, MutexGuard, TryLockResult};
+use std::collections::{BinaryHeap, HashSet};
+
+use std::ops::{Deref};
+use std::sync::{Arc, TryLockResult};
+use std::sync::{Mutex, MutexGuard};
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering::Relaxed;
 use rand::{Rng, thread_rng};
-use metrics::{histogram, counter, register_histogram, register_gauge, register_counter};
+
 
 // register_counter!("pq_ops", "ops");
 // register_gauge!("pq_size", "size");
@@ -16,11 +17,12 @@ pub struct ConcurrentPQ<T: QItem> {
     pq: Arc<Vec<MutexQ<T>>>,
     len: Arc<AtomicIsize>,
     num_queues: usize,
+    available: Arc<Mutex<HashSet<usize>>>,
 }
 
 pub trait QItem: Send + Ord + Eq + PartialOrd + PartialEq {}
 
-type SingleQ<T: QItem> = BinaryHeap<T>;
+type SingleQ<T> = BinaryHeap<T>;
 
 struct MutexQ<T: QItem> {
     queue: Mutex<SingleQ<T>>,
@@ -55,24 +57,26 @@ impl<T: QItem> MutexQ<T> {
 }
 
 
-impl< T: QItem> Clone for ConcurrentPQ<T> {
+impl<T: QItem> Clone for ConcurrentPQ<T> {
     fn clone(&self) -> Self {
-        ConcurrentPQ { pq: self.pq.clone(), len: self.len.clone(), num_queues: self.num_queues }
+        ConcurrentPQ { pq: self.pq.clone(), len: self.len.clone(), num_queues: self.num_queues, available: self.available.clone() }
     }
 }
 
 impl<T: QItem> ConcurrentPQ<T> {
     pub fn new() -> ConcurrentPQ<T> {
         let n = rayon::current_num_threads() * 2;
-        println!("Creating PQ with {} queues", n);
         let mut v = Vec::with_capacity(n);
-        for _ in 0..n {
+        let mut available = HashSet::new();
+        for i in 0..n {
             v.push(MutexQ::new());
+            available.insert(i);
         }
-        let mut pq = ConcurrentPQ {
+        let pq = ConcurrentPQ {
             pq: Arc::new(v),
             len: Arc::new(AtomicIsize::new(0)),
             num_queues: n,
+            available: Arc::new(Mutex::new(available)),
         };
         pq
     }
@@ -81,8 +85,10 @@ impl<T: QItem> ConcurrentPQ<T> {
         thread_rng().gen_range(0..self.pq.len())
     }
     fn try_get_queue(&self) -> Option<HeldQ<T>> {
-        let m: &MutexQ<T> = self.pq.get(self.rand_index()).unwrap();
-        m.try_get()
+        let idx = self.rand_index();
+        let m: &MutexQ<T> = self.pq.get(idx).unwrap();
+        let held = m.try_get();
+        held
     }
 
     fn get_queue(&self) -> HeldQ<T> {
@@ -121,22 +127,21 @@ impl<T: QItem> ConcurrentPQ<T> {
         if self.len.load(Relaxed) <= 0 { return None; }
         let mut q1 = self.get_nonempty_queue(0);
         let q1_sz = q1.as_ref().map(|q| q.queue.len()).unwrap_or(0);
-        let mut q2 = self.get_nonempty_queue(q1_sz);
-
-        let q: Option<HeldQ<T>> = match (q1, q2) {
-            (None, None) => None,
-            (Some(mut x), None) => Some(x),
-            (None, Some(mut x)) => Some(x),
-            (Some(x1), Some(x2)) =>
-                if x1.queue.peek() > x2.queue.peek() { Some(x1) } else { Some(x2) }
-        };
-
-        if q.is_none() {
-            return None
+        let mut q2 = self.get_queue();
+        if q2.queue.is_empty() && q1.is_none() {
+            return None;
+        }
+        self.len.fetch_add(-1, Relaxed);
+        if q1.is_none() {
+            return q2.queue.pop();
+        }
+        if q2.queue.is_empty() {
+            return q1.unwrap().queue.pop();
         }
 
-        self.len.fetch_add(-1, Relaxed);
-        q.unwrap().queue.pop()
+        if q1.as_ref().unwrap().queue.peek() > q2.queue.peek() {
+            q1.unwrap().queue.pop()
+        } else { q2.queue.pop() }
     }
 }
 
@@ -146,28 +151,25 @@ mod tests {
     use std::sync::atomic::Ordering::Relaxed;
     use crate::wordlist::trie::concurrent_pq::{ConcurrentPQ, QItem};
 
-    impl QItem for i32{}
+    impl QItem for i32 {}
 
     #[test]
     fn test_pq() {
         let mut pq = ConcurrentPQ::new();
-        println!("Starting...");
         pq.push(5);
         pq.push(2);
         pq.push(7);
         pq.push(3);
         pq.push(1);
 
-        println!("Pushed {}", pq.len.load(Relaxed));
         assert_eq!(pq.len.load(Relaxed), 5);
 
         let mut popped = vec![];
         while let Some(x) = pq.try_pop() {
-            println!("{}", x);
             popped.push(x);
         }
 
         popped.sort(); // popping is slightly non-deterministic so we're not guaranteed an order
-        assert_eq!(popped, vec![1,2,3,5,7]);
+        assert_eq!(popped, vec![1, 2, 3, 5, 7]);
     }
 }

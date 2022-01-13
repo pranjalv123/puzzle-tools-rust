@@ -36,7 +36,7 @@ impl FileFormat {
             let columns = line.split(self.delimiter.unwrap()).collect::<Vec<_>>();
             let word_idx = self.word_column.unwrap_or(0);
             let freq_idx = self.freq_column.unwrap_or(1);
-            if (columns.len() >= max(word_idx, freq_idx)) {
+            if columns.len() >= max(word_idx, freq_idx) {
                 Ok((columns.get(word_idx).unwrap(),
                     from_str::<isize>(columns.get(freq_idx).unwrap()).unwrap()))
             } else {
@@ -82,7 +82,7 @@ impl<'a> Wordlist<'a> {
                                     println!("{} {}", count, normalize(&word));
                                 }
                             }
-                            Err(e) => {
+                            Err(_e) => {
                                 failures += 1;
                             }
                         }

@@ -1,6 +1,6 @@
-use std::cell::Cell;
-use std::sync::Arc;
-use crate::wordlist::trie::multithreaded_search::ResultCallback;
+
+
+
 
 #[derive(Default)]
 pub struct SearchConfig {
@@ -9,6 +9,7 @@ pub struct SearchConfig {
     pub space_penalty: Option<usize>,
     pub spaces_allowed: usize,
     pub min_word_len: usize,
+    pub prune_freq: usize,
 }
 
 
@@ -21,6 +22,7 @@ impl SearchConfig {
             space_penalty: None,
             spaces_allowed: 0,
             min_word_len: 3,
+            prune_freq: 0
         }
     }
 }

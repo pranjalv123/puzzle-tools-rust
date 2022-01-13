@@ -4,7 +4,6 @@ mod alphabet;
 mod regex;
 
 
-use std::time::Instant;
 use structopt::StructOpt;
 use crate::wordlist::trie::searchconfig::SearchConfig;
 
@@ -45,16 +44,23 @@ fn main() {
                      FileFormat::builder().delimiter(' ').word_column(1).freq_column(0).build())
     }
     let mut default_config = SearchConfig::new();
-    default_config.space_penalty = Some(6187267);
+    default_config.space_penalty = Some(5000);//Some(6187267);
     default_config.spaces_allowed = 2;
-    default_config.max_length = Some(100);
+    default_config.max_results = Some(100);
+    default_config.prune_freq = 100;
 
     if args.anagram.is_some() {
         //let results = wl.anagram(&args.anagram.unwrap());
-        let results = wl.anagram_multithreaded(&args.anagram.unwrap(), &default_config);
-        for r in results {
-            println!("{}", r);
-        }
+        let mut counter = 0;
+        let results = wl.anagram_callback(&args.anagram.as_ref().unwrap(),
+                                          &default_config, |word, config: &SearchConfig| {
+                counter += 1;
+                println!("{}", word);
+                return counter >= config.max_results.unwrap();
+            });
+        // for r in results {
+        //     println!("{}", r);
+        // }
     }
 
 

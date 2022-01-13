@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn finds_words_in_trie() {
         let words = vec!["HELLO", "HELP", "GOODBYE", "GOOD"];
-        let mut trie = Trie::new();
+        let trie = Trie::new();
         let items = (&words).iter().map(|x| *x);
         trie.add_all(items);
         let immut = ImmutableTrie::new();
@@ -126,7 +126,7 @@ mod tests {
     fn doesnt_finds_words_not_in_trie() {
         let words = vec!["HELLO", "HELP", "GOODBYE", "GOOD"];
         let bad_words = vec!["HE", "H", "LOL", "BANANA"];
-        let mut trie = Trie::new();
+        let trie = Trie::new();
         trie.add_all((&words).iter().map(|x| *x));
         let immut = ImmutableTrie::new();
         trie.build(&immut);
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn query_words_in_trie() {
         let words = vec!["HELLO", "HELP", "GOODBYE", "GOOD"];
-        let mut trie = Trie::new();
+        let trie = Trie::new();
         trie.add_all((&words).iter().map(|x| *x));
         let immut = ImmutableTrie::new();
         trie.build(&immut);
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn test_anagram() {
         let words = vec!["HELLO", "HELP", "GOODBYE", "GOOD"];
-        let mut trie = Trie::new();
+        let trie = Trie::new();
         trie.add_all((&words).iter().map(|x| *x));
         let immut = ImmutableTrie::new();
         trie.build(&immut);
