@@ -154,7 +154,7 @@ impl<'a, 'scope> ImmutableTrie<'a> {
         }
         let QItem(node, search_state, state, ..) = item;
 
-        if node.is_terminal {
+        if node.is_terminal && node.freq > config.prune_freq {
             if (params.accept)(&state) && search_state.current_word_len >= config.min_word_len {
                 let mut new_search_state = search_state.clone();
                 new_search_state.prev_words.push(node.node);
